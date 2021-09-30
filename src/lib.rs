@@ -150,13 +150,22 @@ impl<const T: usize> DataMut for List<T> {
     fn data_mut(&mut self)->&mut[Elem] { &mut self.data }
 }
 
-trait Use { fn use_idx(&mut self, i: u8);}
-impl Use for Pair {fn use_idx(&mut self, _:u8){}}
+trait Use {
+  fn use_idx(&mut self, i: u8);
+  fn unuse_idx(&mut self, i: u8);
+}
+impl Use for Pair {fn use_idx(&mut self, _:u8){}
+  fn unuse_idx(&mut self, _: u8) {}
+}
 
 impl<const T: usize> Use for List<T>{
     fn use_idx(&mut self, i:u8) {
         assert!(i<=self.used, "i={} self={:?}", i, self);
         self.used = self.used.max(i+1)
+    }
+
+    fn unuse_idx(&mut self, i: u8) {
+
     }
 }
 
@@ -271,6 +280,34 @@ impl Store {
         // eprintln!("{} gain {:?}",page, self.rc[page as usize]);
         idx
     }
+
+    fn lose(&mut self, mut idx: Index) {
+      loop {
+        let Index(page, list, _item) = idx;
+        let rc = &mut self.rc[page as usize][list as usize];
+        if *rc > 1 {
+          *rc -= 1;
+          break;
+        } else {
+
+          if let Some(list) = self.grab_mut_list(idx) {
+
+          }
+
+          if let Some(car_elem) = self.car(idx) {
+            let car_idx: Index = car_elem.into();
+            self.lose(car_idx);
+          }
+
+          if let Some(Ok(cdr_idx)) = self.cdr(idx) {
+            idx = cdr_idx;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
     // fn lose(&mut self, mut idx: Index) {
     //     loop {
     //         let Index(page, list, _item) = idx;
@@ -342,7 +379,7 @@ impl Store {
             PageType::List14 => unsafe {do_copy(&mut self.pages.list14, from, to)},
         }
     }
-    fn car(&self, ix: Index)-> Option<Elem>{
+    fn car(&self, ix: Index) -> Option<Elem> {
         let Index(_, _, item) = ix;
         let cell = self.grab(ix)?;
         if !cell.is_used(ix) { return None };
@@ -642,6 +679,35 @@ mod tests {
       assert_eq!(p.tail, Index(1, 0, 1));
       assert_matches!(p.data, [11, 10, 0, 0, 0, 0]);
     }
+
+    #[test]
+    fn allocate_cons_2() {
+      use nock::Noun;
+
+      let mut store = Box::new(Store::new());
+
+      // Store a bunch of increasing numbers in a list so it spils onto
+      // a List14 page
+      let mut list_idx = store.pair(1, 0);
+      for n in 2..13 {
+        list_idx = store.cons(n, list_idx).unwrap();
+      }
+
+      assert_eq!(store.types[1], Some(PageType::List2));
+      assert_eq!(store.types[2], Some(PageType::List6));
+      assert_eq!(store.types[3], Some(PageType::List14));
+      assert_eq!(list_idx, Index(3, 0, 2));
+
+      // Allocate an unrelated pair
+      let pair_idx = store.pair(100, 101);
+      assert_eq!(pair_idx, Index(0, 1, 1));
+
+      let elem: Elem = Noun::Cel(pair_idx).into();
+      let cons_idx = store.cons(elem, list_idx);
+      assert_eq!(cons_idx, Some(Index(3, 0, 3)));
+      dbg!(Listerator(store.get_iter(cons_idx.unwrap())));
+    }
+
 
     // Mostly copied from the first part of main()
     #[test]

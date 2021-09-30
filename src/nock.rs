@@ -43,7 +43,7 @@ impl Op {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Noun {
+pub(crate) enum Noun {
     Dir(u32),
     Ind(Index),
     Cel(Index),
