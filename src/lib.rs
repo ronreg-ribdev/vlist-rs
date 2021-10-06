@@ -271,19 +271,41 @@ impl Store {
     fn gain(&mut self, idx: Index)-> Index {
         let Index(page, list, _item) = idx;
         self.rc[page as usize][list as usize] += 1;
-        // eprintln!("{} gain {:?}",page, self.rc[page as usize]);
         idx
     }
-    // fn lose(&mut self, mut idx: Index) {
-    //     loop {
-    //         let Index(page, list, _item) = idx;
-    //         self.rc[page as usize][list as usize] -= 1;
-    //         if self.rc[page as usize][list as usize] > 0 { break; }
-    //         //TODO fix used
-    //         if let Some(Ok(idx)) = self.cdr(idx){} else { break; }
-    //         //TODO free pages ever?
-    //     }
-    // }
+
+    fn lose(&mut self, mut idx: Index) {
+      loop {
+        let Index(page, list, item) = idx;
+        let mut page_rcs = self.rc[page as usize];
+        let rc = &mut page_rcs[list as usize];
+
+        assert!(*rc > 0, "Trying to free index {:?}, which has 0 references", idx);
+        *rc -= 1;
+
+        if *rc > 0 {
+          break;
+        }
+
+        if let Some(Ok(cdr_idx)) = self.cdr(idx) {
+          idx = cdr_idx;
+        }
+
+        // There's probably a more efficient way to do this.
+        if page_rcs.iter().all(|rc| *rc == 0) {
+          self.free[page as usize] = true;
+        }
+
+        /*
+           self.rc[page as usize][list as usize] -= 1;
+           if self.rc[page as usize][list as usize] > 0 { break; }
+        //TODO fix used
+        if let Some(Ok(idx)) = self.cdr(idx){} else { break; }
+        //TODO free pages ever?
+        */
+      }
+    }
+
     const fn new()-> Self {
         const W: usize = PageType::Pair.items_per_page();
         const ZEROED: [Pair; W]  = [const{Pair([0,0])}; W];
@@ -759,6 +781,37 @@ mod tests {
     }
 
     #[test]
+    fn lose_test() {
+      // Note: most of the specific numbers in this test will change when List14 is not the biggest
+      // size of list that exists.
+
+      use PageType::*;
+      let mut store = Box::new(Store::new());
+
+      // Allocate a long list of 0x3
+      let mut idx = store.pair(3, 3);
+      for _ in 0..110 {
+        idx = store.cons(3, idx).unwrap();
+      }
+      assert_eq!(idx, Index(6,1,3));
+
+      assert_eq!(store.types[0..8],
+        [Some(Pair), Some(List2), Some(List6), Some(List14), Some(List14), Some(List14), Some(List14), None]
+      );
+
+      assert_eq!(store.rc[0][0], 2);
+      assert_eq!(store.rc[1][0], 2);
+      assert_eq!(store.rc[2][0], 6);
+      assert_eq!(store.rc[3][0], 14);
+      assert_eq!(store.rc[3][1], 14);
+      assert_eq!(store.rc[4][0], 14);
+      assert_eq!(store.rc[4][1], 14);
+      assert_eq!(store.rc[5][0], 14);
+      assert_eq!(store.rc[5][1], 14);
+      assert_eq!(store.rc[6][1], 4);
+    }
+
+    #[test]
     fn buffer_test() {
       let mut store = Box::new(Store::new());
 
@@ -776,6 +829,15 @@ mod tests {
       let buffer: Index = store.buffer_bytes(b"abcde");
       let bytes: Vec<u8> = store.get_iter_bytes(buffer).collect::<Vec<_>>();
       assert_eq!(b"abcde", bytes.as_slice());
+    }
+
+    #[test]
+    fn items_per_page() {
+      use PageType::*;
+      assert_eq!(Pair.items_per_page(), 16);
+      assert_eq!(List2.items_per_page(), 8);
+      assert_eq!(List6.items_per_page(), 4);
+      assert_eq!(List14.items_per_page(), 2);
     }
 
     #[test]
